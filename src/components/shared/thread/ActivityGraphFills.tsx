@@ -203,25 +203,6 @@ export class ActivityGraphFillComputer {
     return previousUpperEdge;
   }
 
-  _getSampleSpan(
-    i: IndexIntoSamplesTable,
-    samples: SamplesTable,
-    interval: number
-  ): Milliseconds {
-    if (samples.weight) {
-      switch (samples.weightType) {
-        case undefined:
-        case 'samples':
-          return samples.weight[interval] * interval;
-        case 'tracing-ms':
-          return samples.weight[i];
-        default:
-          break;
-      }
-    }
-    return interval;
-  }
-
   _accumulateSampleWithCategory(
     i: IndexIntoSamplesTable,
     thread: Thread,
@@ -238,7 +219,7 @@ export class ActivityGraphFillComputer {
       enableCPUUsage,
     } = this.renderedComponentSettings;
     const sampleTime = samples.time[i];
-    const sampleSpan = this._getSampleSpan(i, samples, interval);
+    const sampleSpan = _getSampleSpan(i, samples, interval);
     if (sampleTime + sampleSpan < rangeStart || sampleTime >= rangeEnd) {
       return;
     }
@@ -255,50 +236,14 @@ export class ActivityGraphFillComputer {
       ? percentageBuffers.beforeSelectedPercentageAtPixel
       : this._pickPercentageBuffer(percentageBuffers, i);
 
-    this._accumulateSampleWithBuffer(
+    _accumulateSampleWithBuffer(
       percentageBuffer,
       sampleTime,
       sampleSpan,
       enableCPUUsage && samples.threadCPURatio ? samples.threadCPURatio[i] : 1,
-      rangeStart
+      rangeStart,
+      this.renderedComponentSettings.xPixelsPerMs
     );
-  }
-
-  _accumulateSampleWithBuffer(
-    percentageBuffer: Float32Array,
-    sampleTime: Milliseconds,
-    sampleSpan: Milliseconds,
-    sampleCpuRatio: number,
-    bufferTimeRangeStart: Milliseconds
-  ) {
-    // Compute the time span for this sample: from midpoint with previous to midpoint with next
-    const timeL = sampleTime;
-    const timeR = sampleTime + sampleSpan;
-
-    const { xPixelsPerMs } = this.renderedComponentSettings;
-
-    // Convert time span to pixel positions relative to the buffer
-    const pixPosL = (timeL - bufferTimeRangeStart) * xPixelsPerMs;
-    const pixPosR = (timeR - bufferTimeRangeStart) * xPixelsPerMs;
-
-    // Clamp to buffer bounds
-    const startPixel = Math.max(0, Math.floor(pixPosL));
-    const endPixel = Math.min(percentageBuffer.length, Math.ceil(pixPosR));
-
-    // Distribute the CPU ratio across the pixels this sample spans
-    if (startPixel < endPixel) {
-      for (let i = startPixel; i < endPixel; i++) {
-        // Calculate what fraction of this pixel is covered by the sample
-        const pixelStart = i;
-        const pixelEnd = i + 1;
-        const overlapStart = Math.max(pixelStart, pixPosL);
-        const overlapEnd = Math.min(pixelEnd, pixPosR);
-        const overlapFraction = (overlapEnd - overlapStart) / 1; // 1 pixel width
-
-        // Average the before and after CPU ratios for smoother transitions
-        percentageBuffer[i] += sampleCpuRatio * overlapFraction;
-      }
-    }
   }
 
   /**
@@ -310,11 +255,6 @@ export class ActivityGraphFillComputer {
   _accumulateSampleCategories() {
     const { fullThread, rangeFilteredThread, sampleIndexOffset } =
       this.renderedComponentSettings;
-
-    if (rangeFilteredThread.samples.length === 0) {
-      // If we have no samples, there's nothing to do.
-      return;
-    }
 
     if (sampleIndexOffset > 0) {
       // If sampleIndexOffset is greater than zero, it means that we are zoomed
@@ -658,36 +598,28 @@ export class ActivityFillGraphQuerier {
       rangeFilteredThread: { samples },
       enableCPUUsage,
       interval,
-      sampleIndexOffset,
-      fullThread,
       xPixelsPerMs,
       rangeStart,
     } = this.renderedComponentSettings;
     const kernelPos = xPixel - SMOOTHING_RADIUS;
     const pixelsAroundX = new Float32Array(SMOOTHING_KERNEL.length);
     const sampleTime = samples.time[sample];
-    // Use the fullThread here to properly get the next and previous in case zoomed in.
-    const fullThreadSample = sample + sampleIndexOffset;
-    const nextSampleTime =
-      fullThreadSample + 1 < fullThread.samples.length
-        ? fullThread.samples.time[fullThreadSample + 1]
-        : sampleTime + interval;
 
-    let beforeSampleCpuRatio = 1;
+    let sampleCpuRatio = 1;
     const { threadCPURatio } = samples;
     if (enableCPUUsage && threadCPURatio) {
-      beforeSampleCpuRatio = threadCPURatio[sample];
+      sampleCpuRatio = threadCPURatio[sample];
     }
 
     const kernelRangeStartTime = rangeStart + kernelPos / xPixelsPerMs;
 
-    _accumulateInBuffer(
+    _accumulateSampleWithBuffer(
       pixelsAroundX,
-      this.renderedComponentSettings,
       sampleTime,
-      nextSampleTime,
-      beforeSampleCpuRatio,
-      kernelRangeStartTime
+      sampleTime + _getSampleSpan(sample, samples, interval),
+      sampleCpuRatio,
+      kernelRangeStartTime,
+      xPixelsPerMs
     );
 
     let sum = 0;
@@ -803,36 +735,44 @@ function _getCategoryFills(
   return ([] as CategoryFill[]).concat(...nestedFills);
 }
 
-/**
- * Mutates `percentageBuffer` by adding contributions from a single sample to
- * the pixels that the sample overlaps with. The buffer covers the following
- * time range: It starts at `rangeStart` and ends at
- * `rangeStart + percentageBuffer.length / renderedComponentSettings.xPixelsPerMs`.
- *
- * CHANGED: Samples now span between midpoints of neighboring samples instead of
- * being centered at sampleTime.
- */
-function _accumulateInBuffer(
+function _getSampleSpan(
+  i: IndexIntoSamplesTable,
+  samples: SamplesTable,
+  interval: number
+): Milliseconds {
+  if (samples.weight) {
+    switch (samples.weightType) {
+      case undefined:
+      case 'samples':
+        return samples.weight[interval] * interval;
+      case 'tracing-ms':
+        return samples.weight[i];
+      default:
+        break;
+    }
+  }
+  return interval;
+}
+
+function _accumulateSampleWithBuffer(
   percentageBuffer: Float32Array,
-  renderedComponentSettings: RenderedComponentSettings,
   sampleTime: Milliseconds,
-  nextSampleTime: Milliseconds,
-  beforeSampleCpuRatio: number,
-  bufferTimeRangeStart: Milliseconds
+  sampleSpan: Milliseconds,
+  sampleCpuRatio: number,
+  bufferTimeRangeStart: Milliseconds,
+  xPixelsPerMs: number
 ) {
   // Compute the time span for this sample: from midpoint with previous to midpoint with next
-  const leftTime = sampleTime;
-  const rightTime = nextSampleTime;
-
-  const xPixelsPerMs = renderedComponentSettings.xPixelsPerMs;
+  const timeL = sampleTime;
+  const timeR = sampleTime + sampleSpan;
 
   // Convert time span to pixel positions relative to the buffer
-  const leftPixel = (leftTime - bufferTimeRangeStart) * xPixelsPerMs;
-  const rightPixel = (rightTime - bufferTimeRangeStart) * xPixelsPerMs;
+  const pixPosL = (timeL - bufferTimeRangeStart) * xPixelsPerMs;
+  const pixPosR = (timeR - bufferTimeRangeStart) * xPixelsPerMs;
 
   // Clamp to buffer bounds
-  const startPixel = Math.max(0, Math.floor(leftPixel));
-  const endPixel = Math.min(percentageBuffer.length, Math.ceil(rightPixel));
+  const startPixel = Math.max(0, Math.floor(pixPosL));
+  const endPixel = Math.min(percentageBuffer.length, Math.ceil(pixPosR));
 
   // Distribute the CPU ratio across the pixels this sample spans
   if (startPixel < endPixel) {
@@ -840,13 +780,12 @@ function _accumulateInBuffer(
       // Calculate what fraction of this pixel is covered by the sample
       const pixelStart = i;
       const pixelEnd = i + 1;
-      const overlapStart = Math.max(pixelStart, leftPixel);
-      const overlapEnd = Math.min(pixelEnd, rightPixel);
+      const overlapStart = Math.max(pixelStart, pixPosL);
+      const overlapEnd = Math.min(pixelEnd, pixPosR);
       const overlapFraction = (overlapEnd - overlapStart) / 1; // 1 pixel width
 
       // Average the before and after CPU ratios for smoother transitions
-      const cpuRatio = beforeSampleCpuRatio;
-      percentageBuffer[i] += cpuRatio * overlapFraction;
+      percentageBuffer[i] += sampleCpuRatio * overlapFraction;
     }
   }
 }
