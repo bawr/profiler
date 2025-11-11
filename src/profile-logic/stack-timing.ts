@@ -220,14 +220,15 @@ export function getStackTimingByDepth(
 
   // We've processed all samples.
   // Commit the boxes that were left open by the last sample.
-  const endTime = samples.time[samples.length - 1] + interval;
+  const endTime = samples.time[samples.length - 1];
+  const endSpan = getSampleSpan(samples.length - 1, samples, interval);
   while (deepestOpenBoxDepth !== -1) {
     const stackTimingForThisDepth = stackTimingByDepth[deepestOpenBoxDepth];
     const index = stackTimingForThisDepth.length++;
     const start = openBoxStartTimeByDepth[deepestOpenBoxDepth];
     const startStackTick = openBoxStartTickByDepth[deepestOpenBoxDepth];
     stackTimingForThisDepth.start[index] = start;
-    stackTimingForThisDepth.end[index] = endTime;
+    stackTimingForThisDepth.end[index] = endTime + endSpan;
     stackTimingForThisDepth.sameWidthsStart[index] = startStackTick;
     stackTimingForThisDepth.sameWidthsEnd[index] = currentStackTick;
     stackTimingForThisDepth.callNode[index] = deepestOpenBoxCallNodeIndex;
@@ -235,7 +236,7 @@ export function getStackTimingByDepth(
       callNodeTablePrefixColumn[deepestOpenBoxCallNodeIndex];
     deepestOpenBoxDepth--;
   }
-  sameWidthsIndexToTimestampMap[currentStackTick] = endTime;
+  sameWidthsIndexToTimestampMap[currentStackTick] = endTime + endSpan;
 
   return { timings: stackTimingByDepth, sameWidthsIndexToTimestampMap };
 }
