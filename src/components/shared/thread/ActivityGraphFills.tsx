@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 import { bisectionRight } from 'firefox-profiler/utils/bisect';
+import { getSampleSpan } from 'firefox-profiler/profile-logic/stack-timing';
 
 import './ActivityGraph.css';
 
@@ -13,7 +14,6 @@ import type {
   Milliseconds,
   DevicePixels,
   CssPixels,
-  SamplesTable,
 } from 'firefox-profiler/types';
 import type { HoveredPixelState } from './ActivityGraph';
 
@@ -219,7 +219,7 @@ export class ActivityGraphFillComputer {
       enableCPUUsage,
     } = this.renderedComponentSettings;
     const sampleTime = samples.time[i];
-    const sampleSpan = _getSampleSpan(i, samples, interval);
+    const sampleSpan = getSampleSpan(i, samples, interval);
     if (sampleTime + sampleSpan < rangeStart || sampleTime >= rangeEnd) {
       return;
     }
@@ -616,7 +616,7 @@ export class ActivityFillGraphQuerier {
     _accumulateSampleWithBuffer(
       pixelsAroundX,
       sampleTime,
-      sampleTime + _getSampleSpan(sample, samples, interval),
+      sampleTime + getSampleSpan(sample, samples, interval),
       sampleCpuRatio,
       kernelRangeStartTime,
       xPixelsPerMs
@@ -733,25 +733,6 @@ function _getCategoryFills(
 
   // Flatten out the fills into a single array.
   return ([] as CategoryFill[]).concat(...nestedFills);
-}
-
-function _getSampleSpan(
-  i: IndexIntoSamplesTable,
-  samples: SamplesTable,
-  interval: number
-): Milliseconds {
-  if (samples.weight) {
-    switch (samples.weightType) {
-      case undefined:
-      case 'samples':
-        return samples.weight[interval] * interval;
-      case 'tracing-ms':
-        return samples.weight[i];
-      default:
-        break;
-    }
-  }
-  return interval;
 }
 
 function _accumulateSampleWithBuffer(

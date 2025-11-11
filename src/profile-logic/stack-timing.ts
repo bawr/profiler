@@ -6,6 +6,8 @@ import type {
   SamplesLikeTable,
   Milliseconds,
   IndexIntoCallNodeTable,
+  SamplesTable,
+  IndexIntoSamplesTable,
 } from 'firefox-profiler/types';
 import type { CallNodeInfo } from './call-node-info';
 
@@ -236,4 +238,23 @@ export function getStackTimingByDepth(
   sameWidthsIndexToTimestampMap[currentStackTick] = endTime;
 
   return { timings: stackTimingByDepth, sameWidthsIndexToTimestampMap };
+}
+
+export function getSampleSpan(
+  i: IndexIntoSamplesTable,
+  samples: SamplesTable,
+  interval: number
+): Milliseconds {
+  if (samples.weight) {
+    switch (samples.weightType) {
+      case undefined:
+      case 'samples':
+        return samples.weight[interval] * interval;
+      case 'tracing-ms':
+        return samples.weight[i];
+      default:
+        break;
+    }
+  }
+  return interval;
 }
