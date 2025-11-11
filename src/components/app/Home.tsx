@@ -584,15 +584,6 @@ class HomeImpl extends React.PureComponent<HomeProps, HomeState> {
           {specialMessage ? (
             <div className="homeSpecialMessage">{specialMessage}</div>
           ) : null}
-          <Localized id="Home--profiler-motto">
-            <p>
-              Capture a performance profile. Analyze it. Share it. Make the web
-              faster.
-            </p>
-          </Localized>
-          <TransitionGroup className="homeInstructionsTransitionGroup">
-            {this._renderInstructions()}
-          </TransitionGroup>
           <section className="homeAdditionalContent">
             {/* Grid container: homeAdditionalContent */}
             <h2 className="homeAdditionalContentTitle protocol-display-xs">
@@ -620,41 +611,6 @@ class HomeImpl extends React.PureComponent<HomeProps, HomeState> {
                   this._onLoadProfileFromUrlRequested
                 }
               />
-
-              <Localized
-                id="Home--load-files-from-other-tools2"
-                elems={{
-                  perf: (
-                    <a href="https://profiler.firefox.com/docs/#/./guide-perf-profiling" />
-                  ),
-                  simpleperf: (
-                    <a href="https://profiler.firefox.com/docs/#/./guide-android-profiling" />
-                  ),
-                  androidstudio: (
-                    <a href="https://developer.android.com/studio/profile/cpu-profiler" />
-                  ),
-                  dhat: (
-                    <a href="https://valgrind.org/docs/manual/dh-manual.html" />
-                  ),
-                  write: (
-                    <a href="https://github.com/firefox-devtools/profiler/blob/main/docs-developer/custom-importer.md" />
-                  ),
-                  traceevent: (
-                    <a href="https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview" />
-                  ),
-                }}
-              >
-                <p>
-                  The Firefox Profiler can also import profiles from other
-                  profilers, such as {'<perf>Linux perf</perf>'},
-                  {'<simpleperf>Android SimplePerf</simpleperf>'}, the Chrome
-                  performance panel,{' '}
-                  {'<androidstudio>Android Studio</androidstudio>'}, or any file
-                  using the {'<dhat>dhat format</dhat>'} or{' '}
-                  {"<traceevent>Google's Trace Event Format</traceevent>"}.{' '}
-                  {'<write>Learn how to write your own importer</write>'}.
-                </p>
-              </Localized>
 
               <Localized
                 id="Home--compare-recordings-info"

@@ -31,7 +31,6 @@
   border: 1px solid #ccc;
   border-radius: 3px;
   background-color: #fff;
-  box-shadow: 0 5px 25px #0b1f50;
   font-size: 130%;
 }
 
@@ -42,7 +41,6 @@
   border-radius: 0.2em;
   margin: 0 0.2em;
   background-color: #f6f6f6;
-  box-shadow: 0.1em 0.1em 0 #bbb;
 }
 
 .homeSectionItems {
