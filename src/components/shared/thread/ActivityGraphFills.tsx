@@ -222,7 +222,11 @@ export class ActivityGraphFillComputer {
     return interval;
   }
 
-  _accumulateSampleWithCategory(i: IndexIntoSamplesTable, thread: Thread) {
+  _accumulateSampleWithCategory(
+    i: IndexIntoSamplesTable,
+    thread: Thread,
+    backfill = false
+  ) {
     const { samples, stackTable } = thread;
     const stackIndex = samples.stack[i];
     const {
@@ -247,7 +251,9 @@ export class ActivityGraphFillComputer {
       return;
     }
 
-    const percentageBuffer = this._pickPercentageBuffer(percentageBuffers, i);
+    const percentageBuffer = backfill
+      ? percentageBuffers.beforeSelectedPercentageAtPixel
+      : this._pickPercentageBuffer(percentageBuffers, i);
 
     this._accumulateSampleWithBuffer(
       percentageBuffer,
@@ -315,7 +321,11 @@ export class ActivityGraphFillComputer {
       // in the timeline and we are seeing a portion of it. In that case,
       // rangeFilteredThread will not have the information of the first previous
       // sample. So we need to get that information from the full thread.
-      this._accumulateSampleWithCategory(sampleIndexOffset - 1, fullThread);
+      this._accumulateSampleWithCategory(
+        sampleIndexOffset - 1,
+        fullThread,
+        true
+      );
     }
 
     // Go through the samples and accumulate the category into the percentageBuffers.
