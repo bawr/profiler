@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 import { bisectionRight } from 'firefox-profiler/utils/bisect';
-import { ensureExists } from 'firefox-profiler/utils/types';
 
 import './ActivityGraph.css';
 
@@ -204,128 +203,43 @@ export class ActivityGraphFillComputer {
     return previousUpperEdge;
   }
 
-  /**
-   * Go through each sample, and apply its category percentages to the category
-   * percentage buffers. These percentage buffers determine the overall percentage
-   * that a category contributes to a single pixel. These buffers are mutated in place
-   * with these methods.
-   */
-  _accumulateSampleCategories() {
-    const {
-      fullThread,
-      rangeFilteredThread: { samples, stackTable },
-      interval,
-      greyCategoryIndex,
-      enableCPUUsage,
-      sampleIndexOffset,
-    } = this.renderedComponentSettings;
-
-    if (samples.length === 0) {
-      // If we have no samples, there's nothing to do.
-      return;
-    }
-
-    let prevSampleTime = samples.time[0] - interval;
-    let sampleTime = samples.time[0];
-
-    if (sampleIndexOffset > 0) {
-      // If sampleIndexOffset is greater than zero, it means that we are zoomed
-      // in the timeline and we are seeing a portion of it. In that case,
-      // rangeFilteredThread will not have the information of the first previous
-      // sample. So we need to get that information from the full thread.
-      prevSampleTime = fullThread.samples.time[sampleIndexOffset - 1];
-    }
-
-    // Go through the samples and accumulate the category into the percentageBuffers.
-    const { threadCPURatio } = samples;
-    for (let i = 0; i < samples.length - 1; i++) {
-      const nextSampleTime = samples.time[i + 1];
-      const stackIndex = samples.stack[i];
-      const category =
-        stackIndex === null
-          ? greyCategoryIndex
-          : stackTable.category[stackIndex];
-
-      let beforeSampleCpuRatio = 1;
-      let afterSampleCpuRatio = 1;
-      if (enableCPUUsage && threadCPURatio) {
-        beforeSampleCpuRatio = threadCPURatio[i];
-        afterSampleCpuRatio = threadCPURatio[i + 1];
-      }
-
-      // Mutate the percentage buffers.
-      this._accumulateInCategory(
-        category,
-        i,
-        prevSampleTime,
-        sampleTime,
-        nextSampleTime,
-        beforeSampleCpuRatio,
-        afterSampleCpuRatio
-      );
-
-      prevSampleTime = sampleTime;
-      sampleTime = nextSampleTime;
-    }
-
-    // Handle the last sample, which was not covered by the for loop above.
-    const lastIdx = samples.length - 1;
-    const lastSampleStack = samples.stack[lastIdx];
-    const lastSampleCategory =
-      lastSampleStack !== null
-        ? stackTable.category[lastSampleStack]
-        : greyCategoryIndex;
-
-    let beforeSampleCpuRatio = 1;
-    let afterSampleCpuRatio = 1;
-    if (enableCPUUsage && threadCPURatio) {
-      beforeSampleCpuRatio = threadCPURatio[lastIdx];
-
-      const nextIdxInFullThread = sampleIndexOffset + lastIdx + 1;
-      if (nextIdxInFullThread < fullThread.samples.length) {
-        // Since we are zoomed in the timeline, rangeFilteredThread will not
-        // have the information of the next sample. So we need to get that
-        // information from the full thread.
-        afterSampleCpuRatio = ensureExists(fullThread.samples.threadCPURatio)[
-          nextIdxInFullThread
-        ];
-      } else {
-        // If we don't have this information in the full thread, simply use the
-        // previous CPU ratio.
-        afterSampleCpuRatio = beforeSampleCpuRatio;
+  _getSampleSpan(
+    i: IndexIntoSamplesTable,
+    samples: SamplesTable,
+    interval: number
+  ): Milliseconds {
+    if (samples.weight) {
+      switch (samples.weightType) {
+        case undefined:
+        case 'samples':
+          return samples.weight[interval] * interval;
+        case 'tracing-ms':
+          return samples.weight[i];
+        default:
+          break;
       }
     }
-
-    this._accumulateInCategory(
-      lastSampleCategory,
-      samples.length - 1,
-      prevSampleTime,
-      sampleTime,
-      sampleTime + interval,
-      beforeSampleCpuRatio,
-      afterSampleCpuRatio
-    );
+    return interval;
   }
 
-  /**
-   * Mutate the percentage buffers, by taking this category, and accumulating its
-   * percentage into the buffer.
-   */
-  _accumulateInCategory(
-    category: IndexIntoCategoryList,
-    sampleIndex: IndexIntoSamplesTable,
-    prevSampleTime: Milliseconds,
-    sampleTime: Milliseconds,
-    nextSampleTime: Milliseconds,
-    beforeSampleCpuRatio: number,
-    afterSampleCpuRatio: number
-  ) {
-    const { rangeEnd, rangeStart, categoryDrawStyles } =
-      this.renderedComponentSettings;
-    if (sampleTime < rangeStart || sampleTime >= rangeEnd) {
+  _accumulateSampleWithCategory(i: IndexIntoSamplesTable, thread: Thread) {
+    const { samples, stackTable } = thread;
+    const stackIndex = samples.stack[i];
+    const {
+      rangeStart,
+      rangeEnd,
+      categoryDrawStyles,
+      greyCategoryIndex,
+      interval,
+      enableCPUUsage,
+    } = this.renderedComponentSettings;
+    const sampleTime = samples.time[i];
+    const sampleSpan = this._getSampleSpan(i, samples, interval);
+    if (sampleTime + sampleSpan < rangeStart || sampleTime >= rangeEnd) {
       return;
     }
-
+    const category =
+      stackIndex === null ? greyCategoryIndex : stackTable.category[stackIndex];
     const categoryDrawStyle = categoryDrawStyles[category];
     const percentageBuffers = this.mutablePercentageBuffers[category];
 
@@ -333,21 +247,81 @@ export class ActivityGraphFillComputer {
       return;
     }
 
-    const percentageBuffer = this._pickPercentageBuffer(
-      percentageBuffers,
-      sampleIndex
-    );
+    const percentageBuffer = this._pickPercentageBuffer(percentageBuffers, i);
 
-    _accumulateInBuffer(
+    this._accumulateSampleWithBuffer(
       percentageBuffer,
-      this.renderedComponentSettings,
-      prevSampleTime,
       sampleTime,
-      nextSampleTime,
-      beforeSampleCpuRatio,
-      afterSampleCpuRatio,
+      sampleSpan,
+      enableCPUUsage && samples.threadCPURatio ? samples.threadCPURatio[i] : 1,
       rangeStart
     );
+  }
+
+  _accumulateSampleWithBuffer(
+    percentageBuffer: Float32Array,
+    sampleTime: Milliseconds,
+    sampleSpan: Milliseconds,
+    sampleCpuRatio: number,
+    bufferTimeRangeStart: Milliseconds
+  ) {
+    // Compute the time span for this sample: from midpoint with previous to midpoint with next
+    const timeL = sampleTime;
+    const timeR = sampleTime + sampleSpan;
+
+    const { xPixelsPerMs } = this.renderedComponentSettings;
+
+    // Convert time span to pixel positions relative to the buffer
+    const pixPosL = (timeL - bufferTimeRangeStart) * xPixelsPerMs;
+    const pixPosR = (timeR - bufferTimeRangeStart) * xPixelsPerMs;
+
+    // Clamp to buffer bounds
+    const startPixel = Math.max(0, Math.floor(pixPosL));
+    const endPixel = Math.min(percentageBuffer.length, Math.ceil(pixPosR));
+
+    // Distribute the CPU ratio across the pixels this sample spans
+    if (startPixel < endPixel) {
+      for (let i = startPixel; i < endPixel; i++) {
+        // Calculate what fraction of this pixel is covered by the sample
+        const pixelStart = i;
+        const pixelEnd = i + 1;
+        const overlapStart = Math.max(pixelStart, pixPosL);
+        const overlapEnd = Math.min(pixelEnd, pixPosR);
+        const overlapFraction = (overlapEnd - overlapStart) / 1; // 1 pixel width
+
+        // Average the before and after CPU ratios for smoother transitions
+        percentageBuffer[i] += sampleCpuRatio * overlapFraction;
+      }
+    }
+  }
+
+  /**
+   * Go through each sample, and apply its category percentages to the category
+   * percentage buffers. These percentage buffers determine the overall percentage
+   * that a category contributes to a single pixel. These buffers are mutated in place
+   * with these methods.
+   */
+  _accumulateSampleCategories() {
+    const { fullThread, rangeFilteredThread, sampleIndexOffset } =
+      this.renderedComponentSettings;
+
+    if (rangeFilteredThread.samples.length === 0) {
+      // If we have no samples, there's nothing to do.
+      return;
+    }
+
+    if (sampleIndexOffset > 0) {
+      // If sampleIndexOffset is greater than zero, it means that we are zoomed
+      // in the timeline and we are seeing a portion of it. In that case,
+      // rangeFilteredThread will not have the information of the first previous
+      // sample. So we need to get that information from the full thread.
+      this._accumulateSampleWithCategory(sampleIndexOffset - 1, fullThread);
+    }
+
+    // Go through the samples and accumulate the category into the percentageBuffers.
+    for (let i = 0; i < rangeFilteredThread.samples.length; i++) {
+      this._accumulateSampleWithCategory(i, rangeFilteredThread);
+    }
   }
 
   /**
@@ -684,29 +658,15 @@ export class ActivityFillGraphQuerier {
     const sampleTime = samples.time[sample];
     // Use the fullThread here to properly get the next and previous in case zoomed in.
     const fullThreadSample = sample + sampleIndexOffset;
-    const prevSampleTime =
-      fullThreadSample > 0
-        ? fullThread.samples.time[fullThreadSample - 1]
-        : sampleTime - interval;
     const nextSampleTime =
       fullThreadSample + 1 < fullThread.samples.length
         ? fullThread.samples.time[fullThreadSample + 1]
         : sampleTime + interval;
 
     let beforeSampleCpuRatio = 1;
-    let afterSampleCpuRatio = 1;
     const { threadCPURatio } = samples;
     if (enableCPUUsage && threadCPURatio) {
       beforeSampleCpuRatio = threadCPURatio[sample];
-      // Use the fullThread here to properly get the next in case zoomed in.
-      const fullThreadSamplesCPURatio = ensureExists(
-        fullThread.samples.threadCPURatio
-      );
-      if (fullThreadSample + 1 < fullThreadSamplesCPURatio.length) {
-        afterSampleCpuRatio = fullThreadSamplesCPURatio[fullThreadSample + 1];
-      } else {
-        afterSampleCpuRatio = beforeSampleCpuRatio;
-      }
     }
 
     const kernelRangeStartTime = rangeStart + kernelPos / xPixelsPerMs;
@@ -714,11 +674,9 @@ export class ActivityFillGraphQuerier {
     _accumulateInBuffer(
       pixelsAroundX,
       this.renderedComponentSettings,
-      prevSampleTime,
       sampleTime,
       nextSampleTime,
       beforeSampleCpuRatio,
-      afterSampleCpuRatio,
       kernelRangeStartTime
     );
 
@@ -847,11 +805,9 @@ function _getCategoryFills(
 function _accumulateInBuffer(
   percentageBuffer: Float32Array,
   renderedComponentSettings: RenderedComponentSettings,
-  prevSampleTime: Milliseconds,
   sampleTime: Milliseconds,
   nextSampleTime: Milliseconds,
   beforeSampleCpuRatio: number,
-  afterSampleCpuRatio: number,
   bufferTimeRangeStart: Milliseconds
 ) {
   // Compute the time span for this sample: from midpoint with previous to midpoint with next
@@ -881,7 +837,7 @@ function _accumulateInBuffer(
       // Average the before and after CPU ratios for smoother transitions
       const cpuRatio = beforeSampleCpuRatio;
       percentageBuffer[i] += cpuRatio * overlapFraction;
-}
+    }
   }
 }
 
