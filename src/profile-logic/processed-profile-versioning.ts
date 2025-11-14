@@ -60,10 +60,15 @@ export function attemptToUpgradeProcessedProfileThroughMutation(
     }
   }
 
-  const profileVersion =
+  let profileVersion =
     typeof meta.preprocessedProfileVersion === 'number'
       ? meta.preprocessedProfileVersion
       : UNANNOTATED_VERSION;
+
+  if (profileVersion < 0) {
+    _upgraders[profileVersion](profile);
+    meta.preprocessedProfileVersion = profileVersion = -profileVersion;
+  }
 
   if (profileVersion === PROCESSED_PROFILE_VERSION) {
     return profile;
@@ -2692,6 +2697,14 @@ const _upgraders: {
       profile.shared = {};
     }
     profile.shared.sources = sourceTable;
+  },
+  [-58]: (profile) => {
+    const new_shared = ['funcTable', 'frameTable', 'stackTable'];
+    for (const thread of profile.threads) {
+      for (const key of new_shared) {
+        thread[key] = profile.shared[key];
+      }
+    }
   },
   // If you add a new upgrader here, please document the change in
   // `docs-developer/CHANGELOG-formats.md`.
